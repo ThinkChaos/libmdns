@@ -17,7 +17,7 @@ use futures::Future;
 use futures::sync::mpsc;
 use std::io;
 use std::thread;
-use std::sync::{Arc, RwLock};
+use std::sync::Arc;
 use std::cell::RefCell;
 use tokio::runtime::Runtime;
 use tokio_reactor::Handle;
@@ -35,7 +35,7 @@ mod net;
 mod net;
 
 use address_family::{Inet, Inet6};
-use services::{ServicesInner, Services, ServiceData};
+use services::{Services, ServiceData};
 use fsm::{Command, FSM};
 
 const DEFAULT_TTL : u32 = 60;
@@ -99,7 +99,7 @@ impl Responder {
             hostname.push_str(".local");
         }
 
-        let services = Arc::new(RwLock::new(ServicesInner::new(hostname)));
+        let services = Services::new(hostname);
 
         let v4 = FSM::<Inet>::new(handle, &services);
         let v6 = FSM::<Inet6>::new(handle, &services);
@@ -156,7 +156,6 @@ impl Responder {
             .send_unsolicited(svc.clone(), DEFAULT_TTL, true);
 
         let id = self.services
-            .write().unwrap()
             .register(svc);
 
         Service {
@@ -172,7 +171,6 @@ impl Responder {
 impl Drop for Service {
     fn drop(&mut self) {
         let svc = self.services
-            .write().unwrap()
             .unregister(self.id);
         self.commands.send_unsolicited(svc, 0, false);
     }

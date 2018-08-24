@@ -1,4 +1,4 @@
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::collections::HashMap;
 use std::slice;
 use multimap::MultiMap;
@@ -9,10 +9,13 @@ pub type AnswerBuilder = dns_parser::Builder<dns_parser::Answers>;
 
 
 /// A collection of registered services is shared between threads.
-pub type Services = Arc<RwLock<ServicesInner>>;
+#[derive(Clone)]
+pub struct Services {
+    hostname: Name<'static>,
+    inner: Arc<RwLock<ServicesInner>>
+}
 
 pub struct ServicesInner {
-    hostname: Name<'static>,
     /// main index
     by_id: HashMap<usize, ServiceData>,
     /// maps to id
@@ -21,18 +24,42 @@ pub struct ServicesInner {
     by_name: HashMap<Name<'static>, usize>
 }
 
-impl ServicesInner {
-    pub fn new(hostname: String) -> Self {
-        ServicesInner {
+impl Services {
+    pub fn new(hostname: String) -> Services {
+        Services {
             hostname: Name::from_str(hostname).unwrap(),
+            inner: Arc::new(RwLock::new(ServicesInner::new())),
+        }
+    }
+
+    pub fn hostname(&self) -> &Name<'static> {
+        &self.hostname
+    }
+
+    pub fn read(&self) -> RwLockReadGuard<ServicesInner> {
+        self.inner.read().expect("Failed to acquire ServicesInner reader lock")
+    }
+
+    pub fn write(&self) -> RwLockWriteGuard<ServicesInner> {
+        self.inner.write().expect("Failed to acquire ServicesInner writer lock")
+    }
+
+    pub fn register(&self, svc: ServiceData) -> usize {
+        self.write().register(svc)
+    }
+
+    pub fn unregister(&self, id: usize) -> ServiceData {
+        self.write().unregister(id)
+    }
+}
+
+impl ServicesInner {
+    pub fn new() -> Self {
+        ServicesInner {
             by_id: HashMap::new(),
             by_type: MultiMap::new(),
             by_name: HashMap::new(),
         }
-    }
-
-    pub fn get_hostname(&self) -> &Name<'static> {
-        &self.hostname
     }
 
     pub fn find_by_name<'a>(&'a self, name: &'a Name<'a>) -> Option<&ServiceData> {

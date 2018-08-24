@@ -120,26 +120,27 @@ impl <AF: AddressFamily> FSM<AF> {
     }
 
     fn handle_question(&self, question: &dns_parser::Question, mut builder: AnswerBuilder) -> AnswerBuilder {
-        let services = self.services.read().unwrap();
+        let services = self.services.read();
+        let hostname = self.services.hostname();
 
         match question.qtype {
             QueryType::A |
             QueryType::AAAA |
-            QueryType::All if question.qname == *services.get_hostname() => {
-                builder = self.add_ip_rr(services.get_hostname(), builder, DEFAULT_TTL);
+            QueryType::All if question.qname == *hostname => {
+                builder = self.add_ip_rr(hostname, builder, DEFAULT_TTL);
             }
             QueryType::PTR => {
                 for svc in services.find_by_type(&question.qname) {
                     builder = svc.add_ptr_rr(builder, DEFAULT_TTL);
-                    builder = svc.add_srv_rr(services.get_hostname(), builder, DEFAULT_TTL);
+                    builder = svc.add_srv_rr(hostname, builder, DEFAULT_TTL);
                     builder = svc.add_txt_rr(builder, DEFAULT_TTL);
-                    builder = self.add_ip_rr(services.get_hostname(), builder, DEFAULT_TTL);
+                    builder = self.add_ip_rr(hostname, builder, DEFAULT_TTL);
                 }
             }
             QueryType::SRV => {
                 if let Some(svc) = services.find_by_name(&question.qname) {
-                    builder = svc.add_srv_rr(services.get_hostname(), builder, DEFAULT_TTL);
-                    builder = self.add_ip_rr(services.get_hostname(), builder, DEFAULT_TTL);
+                    builder = svc.add_srv_rr(hostname, builder, DEFAULT_TTL);
+                    builder = self.add_ip_rr(hostname, builder, DEFAULT_TTL);
                 }
             }
             QueryType::TXT => {
@@ -177,13 +178,13 @@ impl <AF: AddressFamily> FSM<AF> {
         let mut builder = dns_parser::Builder::new_response(0, false, true).move_to::<dns_parser::Answers>();
         builder.set_max_size(None);
 
-        let services = self.services.read().unwrap();
+        let hostname = self.services.hostname();
 
         builder = svc.add_ptr_rr(builder, ttl);
-        builder = svc.add_srv_rr(services.get_hostname(), builder, ttl);
+        builder = svc.add_srv_rr(hostname, builder, ttl);
         builder = svc.add_txt_rr(builder, ttl);
         if include_ip {
-            builder = self.add_ip_rr(services.get_hostname(), builder, ttl);
+            builder = self.add_ip_rr(hostname, builder, ttl);
         }
 
         if !builder.is_empty() {
