@@ -120,7 +120,6 @@ impl <AF: AddressFamily> FSM<AF> {
     }
 
     fn handle_question(&self, question: &dns_parser::Question, mut builder: AnswerBuilder) -> AnswerBuilder {
-        let services = self.services.read();
         let hostname = self.services.hostname();
 
         match question.qtype {
@@ -130,7 +129,7 @@ impl <AF: AddressFamily> FSM<AF> {
                 builder = self.add_ip_rr(hostname, builder, DEFAULT_TTL);
             }
             QueryType::PTR => {
-                for svc in services.find_by_type(&question.qname) {
+                for svc in self.services.read().find_by_type(&question.qname) {
                     builder = svc.add_ptr_rr(builder, DEFAULT_TTL);
                     builder = svc.add_srv_rr(hostname, builder, DEFAULT_TTL);
                     builder = svc.add_txt_rr(builder, DEFAULT_TTL);
@@ -138,13 +137,13 @@ impl <AF: AddressFamily> FSM<AF> {
                 }
             }
             QueryType::SRV => {
-                if let Some(svc) = services.find_by_name(&question.qname) {
+                if let Some(svc) = self.services.read().find_by_name(&question.qname) {
                     builder = svc.add_srv_rr(hostname, builder, DEFAULT_TTL);
                     builder = self.add_ip_rr(hostname, builder, DEFAULT_TTL);
                 }
             }
             QueryType::TXT => {
-                if let Some(svc) = services.find_by_name(&question.qname) {
+                if let Some(svc) = self.services.read().find_by_name(&question.qname) {
                     builder = svc.add_txt_rr(builder, DEFAULT_TTL);
                 }
             }
