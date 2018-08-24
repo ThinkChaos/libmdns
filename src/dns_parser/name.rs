@@ -152,6 +152,12 @@ impl <'a> hash::Hash for Name<'a> {
 
 impl <'a> PartialEq for Name<'a> {
     fn eq(&self, other: &Name) -> bool {
+        self == &other
+    }
+}
+
+impl <'a> PartialEq<&'a Name<'a>> for Name<'a> {
+    fn eq(&self, other: &&'a Name<'a>) -> bool {
         let mut buffer = Vec::new();
         self.write_to(&mut buffer).unwrap();
 

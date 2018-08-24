@@ -125,7 +125,7 @@ impl <AF: AddressFamily> FSM<AF> {
         match question.qtype {
             QueryType::A |
             QueryType::AAAA |
-            QueryType::All if question.qname == *hostname => {
+            QueryType::All if question.qname == hostname => {
                 builder = self.add_ip_rr(hostname, builder, DEFAULT_TTL);
             }
             QueryType::PTR => {
