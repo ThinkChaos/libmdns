@@ -110,6 +110,13 @@ impl Builder {
 
 
 impl Responder {
+    #[deprecated(since="0.3", note="Builder API gives more control over configuration and runtime.")]
+    pub fn new() -> io::Result<Responder> {
+        let mut responder = Builder::new().bind()?;
+        responder.start()?;
+        Ok(responder)
+    }
+
     fn from_builder(hostname: String, addrs: Vec<IpAddr>) -> io::Result<Responder> {
         if addrs.is_empty() {
             panic!("Responder::new called with `addrs == vec![]`");
