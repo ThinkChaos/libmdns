@@ -1,6 +1,8 @@
-#[macro_use(quick_error)] extern crate quick_error;
+#[macro_use(quick_error)]
+extern crate quick_error;
 
-#[macro_use] extern crate log;
+#[macro_use]
+extern crate log;
 
 extern crate byteorder;
 extern crate futures;
@@ -13,36 +15,34 @@ extern crate tokio;
 extern crate tokio_reactor;
 extern crate tokio_udp;
 
-use futures::{future, Future};
 use futures::sync::mpsc;
-use net2::UdpBuilder;
+use futures::{future, Future};
 #[cfg(not(windows))]
 use net2::unix::UnixUdpBuilderExt;
+use net2::UdpBuilder;
+use std::cell::RefCell;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
-use std::thread;
 use std::sync::Arc;
-use std::cell::RefCell;
+use std::thread;
 
 mod dns_parser;
 use dns_parser::Name;
 
 mod fsm;
-mod services;
 #[cfg(windows)]
 #[path = "netwin.rs"]
 mod net;
 #[cfg(not(windows))]
 mod net;
+mod services;
 
-use services::{Services, ServiceData};
 use fsm::{Command, FSM};
 use net::gethostname;
+use services::{ServiceData, Services};
 
-
-const DEFAULT_TTL : u32 = 60;
-const MDNS_PORT : u16 = 5353;
-
+const DEFAULT_TTL: u32 = 60;
+const MDNS_PORT: u16 = 5353;
 
 pub struct Builder {
     hostname: Option<String>,
@@ -62,7 +62,6 @@ pub struct Service {
     commands: CommandSender,
     _shutdown: Arc<Shutdown>,
 }
-
 
 impl Builder {
     pub fn new() -> Builder {
@@ -100,17 +99,19 @@ impl Builder {
         let mut addrs = self.addrs;
         if addrs.is_empty() {
             debug!("Tried to bind Responder to 0 addrs. Binding to all interfaces.");
-            addrs.push(IpAddr::V4(Ipv4Addr::new(0,0,0,0))); // 0.0.0.0
-            addrs.push(IpAddr::V6(Ipv6Addr::new(0,0,0,0,0,0,0,0))); // ::
+            addrs.push(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))); // 0.0.0.0
+            addrs.push(IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0))); // ::
         }
 
         Responder::from_builder(hostname, addrs)
     }
 }
 
-
 impl Responder {
-    #[deprecated(since="0.3", note="Builder API gives more control over configuration and runtime.")]
+    #[deprecated(
+        since = "0.3",
+        note = "Builder API gives more control over configuration and runtime."
+    )]
     pub fn new() -> io::Result<Responder> {
         let mut responder = Builder::new().bind()?;
         responder.start()?;
@@ -129,12 +130,12 @@ impl Responder {
         let (fsms, commands): (Vec<_>, Vec<_>) = sockets
             .into_iter()
             .map(|socket| {
-                let socket = tokio_udp::UdpSocket::from_std(socket, &tokio_reactor::Handle::default())
-                    .expect("tokio::net::UdpSocket::from_std failed");
+                let socket =
+                    tokio_udp::UdpSocket::from_std(socket, &tokio_reactor::Handle::default())
+                        .expect("tokio::net::UdpSocket::from_std failed");
 
                 FSM::new(socket, &services)
-            })
-            .unzip();
+            }).unzip();
 
         let commands = CommandSender(commands);
         let shutdown = Arc::new(Shutdown(commands.clone()));
@@ -165,15 +166,11 @@ impl Responder {
 
             if addr.is_ipv4() {
                 socket.join_multicast_v4(
-                    &Ipv4Addr::new(224,0,0,251),
-                    &Ipv4Addr::new(0,0,0,0),
+                    &Ipv4Addr::new(224, 0, 0, 251),
+                    &Ipv4Addr::new(0, 0, 0, 0),
                 )?;
-            }
-            else {
-                socket.join_multicast_v6(
-                    &Ipv6Addr::new(0xff02,0,0,0,0,0,0,0xfb),
-                    0
-                )?;
+            } else {
+                socket.join_multicast_v6(&Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 0xfb), 0)?;
             }
 
             sockets.push(socket);
@@ -182,7 +179,7 @@ impl Responder {
         Ok(sockets)
     }
 
-    pub fn serve(&self) -> impl Future<Item=(), Error=io::Error> {
+    pub fn serve(&self) -> impl Future<Item = (), Error = io::Error> {
         // Check if Responder was already started
         if self.fsms.borrow().is_empty() {
             panic!("`Responder::serve` was called twice.");
@@ -210,13 +207,14 @@ impl Responder {
         let txt = if txt.is_empty() {
             vec![0]
         } else {
-            txt.into_iter().flat_map(|entry| {
-                let entry = entry.as_bytes();
-                if entry.len() > 255 {
-                    panic!("{:?} is too long for a TXT record", entry);
-                }
-                std::iter::once(entry.len() as u8).chain(entry.into_iter().cloned())
-            }).collect()
+            txt.into_iter()
+                .flat_map(|entry| {
+                    let entry = entry.as_bytes();
+                    if entry.len() > 255 {
+                        panic!("{:?} is too long for a TXT record", entry);
+                    }
+                    std::iter::once(entry.len() as u8).chain(entry.into_iter().cloned())
+                }).collect()
         };
 
         let svc = ServiceData {
@@ -226,11 +224,11 @@ impl Responder {
             txt: txt,
         };
 
-        self.commands.borrow_mut()
+        self.commands
+            .borrow_mut()
             .send_unsolicited(svc.clone(), DEFAULT_TTL, true);
 
-        let id = self.services
-            .register(svc);
+        let id = self.services.register(svc);
 
         Service {
             id: id,
@@ -243,8 +241,7 @@ impl Responder {
 
 impl Drop for Service {
     fn drop(&mut self) {
-        let svc = self.services
-            .unregister(self.id);
+        let svc = self.services.unregister(self.id);
         self.commands.send_unsolicited(svc, 0, false);
     }
 }

@@ -1,8 +1,8 @@
+use byteorder::{BigEndian, ByteOrder};
 use libc::{self, c_char, c_int, c_uint, size_t};
 use std::io;
-use std::ptr::null_mut;
 use std::net::{IpAddr, Ipv6Addr, SocketAddr};
-use byteorder::{BigEndian, ByteOrder};
+use std::ptr::null_mut;
 
 pub fn gethostname() -> io::Result<String> {
     unsafe {
@@ -80,14 +80,16 @@ impl Interface {
                     libc::AF_INET6 => {
                         let sa = *(ifa.ifa_addr as *const libc::sockaddr_in6);
                         let addr = sa.sin6_addr.s6_addr;
-                        let ip = IpAddr::V6(Ipv6Addr::new(BigEndian::read_u16(&addr[0..2]),
-                                                          BigEndian::read_u16(&addr[2..4]),
-                                                          BigEndian::read_u16(&addr[4..6]),
-                                                          BigEndian::read_u16(&addr[6..8]),
-                                                          BigEndian::read_u16(&addr[8..10]),
-                                                          BigEndian::read_u16(&addr[10..12]),
-                                                          BigEndian::read_u16(&addr[12..14]),
-                                                          BigEndian::read_u16(&addr[14..16])));
+                        let ip = IpAddr::V6(Ipv6Addr::new(
+                            BigEndian::read_u16(&addr[0..2]),
+                            BigEndian::read_u16(&addr[2..4]),
+                            BigEndian::read_u16(&addr[4..6]),
+                            BigEndian::read_u16(&addr[6..8]),
+                            BigEndian::read_u16(&addr[8..10]),
+                            BigEndian::read_u16(&addr[10..12]),
+                            BigEndian::read_u16(&addr[12..14]),
+                            BigEndian::read_u16(&addr[14..16]),
+                        ));
                         let port = u16::from_be(sa.sin6_port);
                         Some(SocketAddr::new(ip, port))
                     }

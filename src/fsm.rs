@@ -1,14 +1,14 @@
-use dns_parser::{self, QueryClass, QueryType, Name, RRData};
+use dns_parser::{self, Name, QueryClass, QueryType, RRData};
+use futures::sync::mpsc;
+use futures::{Async, Future, Poll, Stream};
 use std::collections::VecDeque;
 use std::io;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-use futures::{Poll, Async, Future, Stream};
-use futures::sync::mpsc;
 use tokio_udp::UdpSocket;
 
 use super::{DEFAULT_TTL, MDNS_PORT};
 use net;
-use services::{Services, ServiceData};
+use services::{ServiceData, Services};
 
 pub type AnswerBuilder = dns_parser::Builder<dns_parser::Answers>;
 
@@ -17,7 +17,7 @@ pub enum Command {
     SendUnsolicited {
         svc: ServiceData,
         ttl: u32,
-        include_ip: bool
+        include_ip: bool,
     },
     Shutdown,
 }
@@ -31,12 +31,13 @@ pub struct FSM {
 }
 
 impl FSM {
-    pub fn new(socket: UdpSocket, services: &Services)
-        -> (FSM, mpsc::UnboundedSender<Command>)
-    {
+    pub fn new(socket: UdpSocket, services: &Services) -> (FSM, mpsc::UnboundedSender<Command>) {
         let (tx, rx) = mpsc::unbounded();
 
-        let is_ipv6 = socket.local_addr().expect("Could not get socket's local address.").is_ipv6();
+        let is_ipv6 = socket
+            .local_addr()
+            .expect("Could not get socket's local address.")
+            .is_ipv6();
 
         let fsm = FSM {
             socket: socket,
@@ -89,8 +90,11 @@ impl FSM {
             return;
         }
 
-        let mut unicast_builder = dns_parser::Builder::new_response(packet.header.id, false, true).move_to::<dns_parser::Answers>();
-        let mut multicast_builder = dns_parser::Builder::new_response(packet.header.id, false, true).move_to::<dns_parser::Answers>();
+        let mut unicast_builder = dns_parser::Builder::new_response(packet.header.id, false, true)
+            .move_to::<dns_parser::Answers>();
+        let mut multicast_builder =
+            dns_parser::Builder::new_response(packet.header.id, false, true)
+                .move_to::<dns_parser::Answers>();
         unicast_builder.set_max_size(None);
         multicast_builder.set_max_size(None);
 
@@ -116,13 +120,15 @@ impl FSM {
         }
     }
 
-    fn handle_question(&self, question: &dns_parser::Question, mut builder: AnswerBuilder) -> AnswerBuilder {
+    fn handle_question(
+        &self,
+        question: &dns_parser::Question,
+        mut builder: AnswerBuilder,
+    ) -> AnswerBuilder {
         let hostname = self.services.hostname();
 
         match question.qtype {
-            QueryType::A |
-            QueryType::AAAA |
-            QueryType::All if question.qname == hostname => {
+            QueryType::A | QueryType::AAAA | QueryType::All if question.qname == hostname => {
                 builder = self.add_ip_rr(hostname, builder, DEFAULT_TTL);
             }
             QueryType::PTR => {
@@ -144,7 +150,7 @@ impl FSM {
                     builder = svc.add_txt_rr(builder, DEFAULT_TTL);
                 }
             }
-            _ => ()
+            _ => (),
         }
 
         builder
@@ -163,7 +169,7 @@ impl FSM {
                 Some(IpAddr::V6(ip)) if self.is_ipv6 => {
                     builder = builder.add_answer(hostname, QueryClass::IN, ttl, &RRData::AAAA(ip))
                 }
-                _ => ()
+                _ => (),
             }
         }
 
@@ -171,7 +177,8 @@ impl FSM {
     }
 
     fn send_unsolicited(&mut self, svc: &ServiceData, ttl: u32, include_ip: bool) {
-        let mut builder = dns_parser::Builder::new_response(0, false, true).move_to::<dns_parser::Answers>();
+        let mut builder =
+            dns_parser::Builder::new_response(0, false, true).move_to::<dns_parser::Answers>();
         builder.set_max_size(None);
 
         let hostname = self.services.hostname();
@@ -192,10 +199,9 @@ impl FSM {
 
     fn mdns_group(&self) -> IpAddr {
         if self.is_ipv6 {
-            IpAddr::V4(Ipv4Addr::new(224,0,0,251))
-        }
-        else {
-            IpAddr::V6(Ipv6Addr::new(0xff02,0,0,0,0,0,0,0xfb))
+            IpAddr::V4(Ipv4Addr::new(224, 0, 0, 251))
+        } else {
+            IpAddr::V6(Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 0xfb))
         }
     }
 }
@@ -208,7 +214,11 @@ impl Future for FSM {
         while let Async::Ready(cmd) = self.commands.poll().unwrap() {
             match cmd {
                 Some(Command::Shutdown) => return Ok(Async::Ready(())),
-                Some(Command::SendUnsolicited { svc, ttl, include_ip }) => {
+                Some(Command::SendUnsolicited {
+                    svc,
+                    ttl,
+                    include_ip,
+                }) => {
                     self.send_unsolicited(&svc, ttl, include_ip);
                 }
                 None => {
