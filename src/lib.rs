@@ -13,19 +13,20 @@ extern crate tokio;
 extern crate tokio_reactor;
 extern crate tokio_udp;
 
-use futures::Future;
+use futures::{future, Future};
 use futures::sync::mpsc;
+use net2::UdpBuilder;
+#[cfg(not(windows))]
+use net2::unix::UnixUdpBuilderExt;
 use std::io;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
 use std::thread;
 use std::sync::Arc;
 use std::cell::RefCell;
-use tokio::runtime::Runtime;
-use tokio_reactor::Handle;
 
 mod dns_parser;
 use dns_parser::Name;
 
-mod address_family;
 mod fsm;
 mod services;
 #[cfg(windows)]
@@ -34,14 +35,22 @@ mod net;
 #[cfg(not(windows))]
 mod net;
 
-use address_family::{Inet, Inet6};
 use services::{Services, ServiceData};
 use fsm::{Command, FSM};
+use net::gethostname;
+
 
 const DEFAULT_TTL : u32 = 60;
 const MDNS_PORT : u16 = 5353;
 
+
+pub struct Builder {
+    hostname: Option<String>,
+    addrs: Vec<IpAddr>,
+}
+
 pub struct Responder {
+    fsms: RefCell<Vec<FSM>>,
     services: Services,
     commands: RefCell<CommandSender>,
     shutdown: Arc<Shutdown>,
@@ -54,84 +63,142 @@ pub struct Service {
     _shutdown: Arc<Shutdown>,
 }
 
-type ResponderTask = Box<Future<Item=(), Error=io::Error> + Send>;
 
-impl Responder {
-    fn setup_runtime() -> io::Result<(Runtime, Responder)> {
-        Runtime::new().and_then(|mut rt|
-            Self::spawn(&mut rt).and_then(move |responder|
-                Ok((rt, responder))
-            )
-        )
+impl Builder {
+    pub fn new() -> Builder {
+        Builder {
+            hostname: None,
+            addrs: Vec::new(),
+        }
     }
 
-    pub fn new() -> io::Result<Responder> {
-        let (tx, rx) = std::sync::mpsc::sync_channel(0);
-        thread::Builder::new()
-            .name("mdns-responder".to_owned())
-            .spawn(move || {
-                match Self::setup_runtime() {
-                    Ok((rt, responder)) => {
-                        tx.send(Ok(responder)).expect("tx responder channel closed");
-                        rt.shutdown_on_idle().wait().expect("mdns thread failed");
-                    }
-                    Err(err) => {
-                        tx.send(Err(err)).expect("tx responder channel closed");
-                    }
-                }
-            })?;
+    pub fn hostname<S: Into<String>>(mut self, hostname: S) -> Builder {
+        let mut hostname = hostname.into();
 
-        rx.recv().expect("rx responder channel closed")
-    }
-
-    pub fn spawn(rt: &mut Runtime) -> io::Result<Responder> {
-        let (responder, task) = Responder::with_handle(rt.reactor())?;
-        rt.spawn(task.map_err(|e| {
-            warn!("mdns error {:?}", e);
-            ()
-        }));
-        Ok(responder)
-    }
-
-    pub fn with_handle(handle: &Handle) -> io::Result<(Responder, ResponderTask)> {
-        let mut hostname = try!(net::gethostname());
         if !hostname.ends_with(".local") {
             hostname.push_str(".local");
         }
 
-        let services = Services::new(hostname);
+        self.hostname = Some(hostname);
+        self
+    }
 
-        let v4 = FSM::<Inet>::new(handle, &services);
-        let v6 = FSM::<Inet6>::new(handle, &services);
+    pub fn add_addr(mut self, addr: IpAddr) -> Builder {
+        self.addrs.push(addr.into());
+        self
+    }
 
-        let (task, commands): (ResponderTask, _) = match (v4, v6) {
-            (Ok((v4_task, v4_command)), Ok((v6_task, v6_command))) => {
-                let task = v4_task.join(v6_task).map(|((),())| ());
-                let task = Box::new(task);
-                let commands = vec![v4_command, v6_command];
-                (task, commands)
-            }
-
-            (Ok((v4_task, v4_command)), Err(err)) => {
-                warn!("Failed to register IPv6 receiver: {:?}", err);
-                (Box::new(v4_task), vec![v4_command])
-            }
-
-            (Err(err), _) => return Err(err),
+    pub fn bind(self) -> io::Result<Responder> {
+        // TODO: document this behavior
+        let hostname = if let Some(hostname) = self.hostname {
+            hostname
+        } else {
+            gethostname()?
         };
 
-        let commands = CommandSender(commands);
-        let responder = Responder {
-            services: services,
-            commands: RefCell::new(commands.clone()),
-            shutdown: Arc::new(Shutdown(commands)),
-        };
+        // TODO: document this behavior
+        let mut addrs = self.addrs;
+        if addrs.is_empty() {
+            debug!("Tried to bind Responder to 0 addrs. Binding to all interfaces.");
+            addrs.push(IpAddr::V4(Ipv4Addr::new(0,0,0,0))); // 0.0.0.0
+            addrs.push(IpAddr::V6(Ipv6Addr::new(0,0,0,0,0,0,0,0))); // ::
+        }
 
-        Ok((responder, task))
+        Responder::from_builder(hostname, addrs)
     }
 }
 
+
 impl Responder {
+    fn from_builder(hostname: String, addrs: Vec<IpAddr>) -> io::Result<Responder> {
+        if addrs.is_empty() {
+            panic!("Responder::new called with `addrs == vec![]`");
+        }
+
+        let services = Services::new(hostname);
+
+        let sockets = Self::bind(addrs)?;
+
+        let (fsms, commands): (Vec<_>, Vec<_>) = sockets
+            .into_iter()
+            .map(|socket| {
+                let socket = tokio_udp::UdpSocket::from_std(socket, &tokio_reactor::Handle::default())
+                    .expect("tokio::net::UdpSocket::from_std failed");
+
+                FSM::new(socket, &services)
+            })
+            .unzip();
+
+        let commands = CommandSender(commands);
+        let shutdown = Arc::new(Shutdown(commands.clone()));
+
+        Ok(Responder {
+            fsms: RefCell::new(fsms),
+            services,
+            commands: RefCell::new(commands),
+            shutdown,
+        })
+    }
+
+    fn bind(addrs: Vec<IpAddr>) -> io::Result<Vec<UdpSocket>> {
+        let mut sockets = Vec::with_capacity(addrs.len());
+
+        for addr in addrs {
+            let builder = if addr.is_ipv4() {
+                UdpBuilder::new_v4()?
+            } else {
+                UdpBuilder::new_v6()?
+            };
+
+            builder.reuse_address(true)?;
+            #[cfg(not(windows))]
+            builder.reuse_port(true)?;
+
+            let socket = builder.bind(&SocketAddr::new(addr, MDNS_PORT))?;
+
+            if addr.is_ipv4() {
+                socket.join_multicast_v4(
+                    &Ipv4Addr::new(224,0,0,251),
+                    &Ipv4Addr::new(0,0,0,0),
+                )?;
+            }
+            else {
+                socket.join_multicast_v6(
+                    &Ipv6Addr::new(0xff02,0,0,0,0,0,0,0xfb),
+                    0
+                )?;
+            }
+
+            sockets.push(socket);
+        }
+
+        Ok(sockets)
+    }
+
+    pub fn serve(&self) -> impl Future<Item=(), Error=io::Error> {
+        // Check if Responder was already started
+        if self.fsms.borrow().is_empty() {
+            panic!("`Responder::serve` was called twice.");
+        }
+
+        let fsms = self.fsms.replace(vec![]);
+
+        future::join_all(fsms).map(|_| ())
+    }
+
+    pub fn start(&mut self) -> io::Result<thread::JoinHandle<()>> {
+        let future = self.serve();
+
+        thread::Builder::new()
+            .name("mdns-responder".to_owned())
+            .spawn(move || {
+                tokio::run(future.map_err(|e| {
+                    warn!("mdns error {:?}", e);
+                    ()
+                }));
+            })
+    }
+
     pub fn register(&self, svc_type: String, svc_name: String, port: u16, txt: &[&str]) -> Service {
         let txt = if txt.is_empty() {
             vec![0]
@@ -165,7 +232,6 @@ impl Responder {
             _shutdown: self.shutdown.clone(),
         }
     }
-
 }
 
 impl Drop for Service {

@@ -1,15 +1,12 @@
 use dns_parser::{self, QueryClass, QueryType, Name, RRData};
 use std::collections::VecDeque;
 use std::io;
-use std::marker::PhantomData;
-use std::net::{IpAddr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use futures::{Poll, Async, Future, Stream};
 use futures::sync::mpsc;
-use tokio_reactor::Handle;
 use tokio_udp::UdpSocket;
 
 use super::{DEFAULT_TTL, MDNS_PORT};
-use address_family::AddressFamily;
 use net;
 use services::{Services, ServiceData};
 
@@ -25,31 +22,31 @@ pub enum Command {
     Shutdown,
 }
 
-pub struct FSM<AF: AddressFamily> {
+pub struct FSM {
     socket: UdpSocket,
+    is_ipv6: bool,
     services: Services,
     commands: mpsc::UnboundedReceiver<Command>,
     outgoing: VecDeque<(Vec<u8>, SocketAddr)>,
-    _af: PhantomData<AF>,
 }
 
-impl <AF: AddressFamily> FSM<AF> {
-    pub fn new(handle: &Handle, services: &Services)
-        -> io::Result<(FSM<AF>, mpsc::UnboundedSender<Command>)>
+impl FSM {
+    pub fn new(socket: UdpSocket, services: &Services)
+        -> (FSM, mpsc::UnboundedSender<Command>)
     {
-        let std_socket = AF::bind()?;
-        let socket = UdpSocket::from_std(std_socket, handle)?;
         let (tx, rx) = mpsc::unbounded();
+
+        let is_ipv6 = socket.local_addr().expect("Could not get socket's local address.").is_ipv6();
 
         let fsm = FSM {
             socket: socket,
+            is_ipv6: is_ipv6,
             services: services.clone(),
             commands: rx,
             outgoing: VecDeque::new(),
-            _af: PhantomData,
         };
 
-        Ok((fsm, tx))
+        (fsm, tx)
     }
 
     fn recv_packets(&mut self) -> io::Result<()> {
@@ -109,7 +106,7 @@ impl <AF: AddressFamily> FSM<AF> {
 
         if !multicast_builder.is_empty() {
             let response = multicast_builder.build().unwrap_or_else(|x| x);
-            let addr = SocketAddr::new(AF::mdns_group(), MDNS_PORT);
+            let addr = SocketAddr::new(self.mdns_group(), MDNS_PORT);
             self.outgoing.push_back((response, addr));
         }
 
@@ -160,10 +157,10 @@ impl <AF: AddressFamily> FSM<AF> {
             }
 
             match iface.ip() {
-                Some(IpAddr::V4(ip)) if !AF::v6() => {
+                Some(IpAddr::V4(ip)) if !self.is_ipv6 => {
                     builder = builder.add_answer(hostname, QueryClass::IN, ttl, &RRData::A(ip))
                 }
-                Some(IpAddr::V6(ip)) if AF::v6() => {
+                Some(IpAddr::V6(ip)) if self.is_ipv6 => {
                     builder = builder.add_answer(hostname, QueryClass::IN, ttl, &RRData::AAAA(ip))
                 }
                 _ => ()
@@ -188,13 +185,22 @@ impl <AF: AddressFamily> FSM<AF> {
 
         if !builder.is_empty() {
             let response = builder.build().unwrap_or_else(|x| x);
-            let addr = SocketAddr::new(AF::mdns_group(), MDNS_PORT);
+            let addr = SocketAddr::new(self.mdns_group(), MDNS_PORT);
             self.outgoing.push_back((response, addr));
+        }
+    }
+
+    fn mdns_group(&self) -> IpAddr {
+        if self.is_ipv6 {
+            IpAddr::V4(Ipv4Addr::new(224,0,0,251))
+        }
+        else {
+            IpAddr::V6(Ipv6Addr::new(0xff02,0,0,0,0,0,0,0xfb))
         }
     }
 }
 
-impl <AF: AddressFamily> Future for FSM<AF> {
+impl Future for FSM {
     type Item = ();
     type Error = io::Error;
 
