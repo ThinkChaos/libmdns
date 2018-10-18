@@ -44,6 +44,7 @@ use services::{ServiceData, Services};
 const DEFAULT_TTL: u32 = 60;
 const MDNS_PORT: u16 = 5353;
 
+#[derive(Default)]
 pub struct Builder {
     hostname: Option<String>,
     addrs: Vec<IpAddr>,
@@ -71,7 +72,7 @@ impl Builder {
         }
     }
 
-    pub fn hostname<S: Into<String>>(mut self, hostname: S) -> Builder {
+    pub fn hostname<S: Into<String>>(&mut self, hostname: S) -> &mut Builder {
         let mut hostname = hostname.into();
 
         if !hostname.ends_with(".local") {
@@ -82,8 +83,8 @@ impl Builder {
         self
     }
 
-    pub fn add_addr(mut self, addr: IpAddr) -> Builder {
-        self.addrs.push(addr.into());
+    pub fn add_addr(&mut self, addr: IpAddr) -> &mut Builder {
+        self.addrs.push(addr);
         self
     }
 
@@ -109,7 +110,7 @@ impl Builder {
 
 impl Responder {
     #[deprecated(
-        since = "0.3",
+        since = "0.3.0",
         note = "Builder API gives more control over configuration and runtime."
     )]
     pub fn new() -> io::Result<Responder> {
