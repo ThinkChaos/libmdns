@@ -88,16 +88,16 @@ impl Builder {
         self
     }
 
-    pub fn bind(self) -> io::Result<Responder> {
+    pub fn bind(&self) -> io::Result<Responder> {
         // TODO: document this behavior
-        let hostname = if let Some(hostname) = self.hostname {
-            hostname
+        let hostname = if let Some(ref hostname) = self.hostname {
+            hostname.clone()
         } else {
             gethostname()?
         };
 
         // TODO: document this behavior
-        let mut addrs = self.addrs;
+        let mut addrs = self.addrs.clone();
         if addrs.is_empty() {
             debug!("Tried to bind Responder to 0 addrs. Binding to all interfaces.");
             addrs.push(IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))); // 0.0.0.0
