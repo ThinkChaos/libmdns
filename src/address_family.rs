@@ -32,13 +32,13 @@ impl AddressFamily for Inet {
         UdpBuilder::new_v4()
     }
     fn any_addr() -> IpAddr {
-        IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0))
+        IpAddr::V4(Ipv4Addr::UNSPECIFIED)
     }
     fn mdns_group() -> IpAddr {
         IpAddr::V4(Ipv4Addr::new(224, 0, 0, 251))
     }
     fn join_multicast(socket: &UdpSocket) -> io::Result<()> {
-        socket.join_multicast_v4(&Ipv4Addr::new(224, 0, 0, 251), &Ipv4Addr::new(0, 0, 0, 0))
+        socket.join_multicast_v4(&Ipv4Addr::new(224, 0, 0, 251), &Ipv4Addr::UNSPECIFIED)
     }
     fn v6() -> bool {
         false
@@ -50,7 +50,7 @@ impl AddressFamily for Inet6 {
         UdpBuilder::new_v6()
     }
     fn any_addr() -> IpAddr {
-        IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 0))
+        IpAddr::V6(Ipv6Addr::UNSPECIFIED)
     }
     fn mdns_group() -> IpAddr {
         IpAddr::V6(Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 0xfb))

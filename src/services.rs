@@ -43,7 +43,7 @@ impl ServicesInner {
 
         FindByType {
             services: self,
-            ids: ids,
+            ids,
         }
     }
 

@@ -1,5 +1,5 @@
 use futures_util::{future, future::FutureExt};
-use log::warn;
+use log;
 use std::cell::RefCell;
 use std::future::Future;
 use std::io;
@@ -96,7 +96,7 @@ impl Responder {
             }
 
             (Ok((v4_task, v4_command)), Err(err)) => {
-                warn!("Failed to register IPv6 receiver: {:?}", err);
+                log::warn!("Failed to register IPv6 receiver: {:?}", err);
                 (Box::new(v4_task), vec![v4_command])
             }
 
@@ -105,7 +105,7 @@ impl Responder {
 
         let commands = CommandSender(commands);
         let responder = Responder {
-            services: services,
+            services,
             commands: RefCell::new(commands.clone()),
             shutdown: Arc::new(Shutdown(commands)),
         };
@@ -133,8 +133,8 @@ impl Responder {
         let svc = ServiceData {
             typ: Name::from_str(format!("{}.local", svc_type)).unwrap(),
             name: Name::from_str(format!("{}.{}.local", svc_name, svc_type)).unwrap(),
-            port: port,
-            txt: txt,
+            port,
+            txt,
         };
 
         self.commands
@@ -144,7 +144,7 @@ impl Responder {
         let id = self.services.write().unwrap().register(svc);
 
         Service {
-            id: id,
+            id,
             commands: self.commands.borrow().clone(),
             services: self.services.clone(),
             _shutdown: self.shutdown.clone(),
@@ -179,9 +179,9 @@ impl CommandSender {
 
     fn send_unsolicited(&mut self, svc: ServiceData, ttl: u32, include_ip: bool) {
         self.send(Command::SendUnsolicited {
-            svc: svc,
-            ttl: ttl,
-            include_ip: include_ip,
+            svc,
+            ttl,
+            include_ip,
         });
     }
 

@@ -58,7 +58,7 @@ impl<AF: AddressFamily> FSM<AF> {
         let (tx, rx) = mpsc::unbounded_channel();
 
         let fsm = FSM {
-            socket: socket,
+            socket,
             services: services.clone(),
             commands: rx,
             outgoing: VecDeque::new(),
