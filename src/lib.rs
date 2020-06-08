@@ -39,7 +39,7 @@ pub struct Service {
     _shutdown: Arc<Shutdown>,
 }
 
-type ResponderTask = Box<dyn Future<Output = ()> + Send + Unpin>;
+pub type ResponderTask = Box<dyn Future<Output = ()> + Send + Unpin>;
 
 impl Responder {
     pub fn new() -> io::Result<Responder> {
@@ -68,18 +68,17 @@ impl Responder {
     }
 
     pub fn with_default_handle() -> io::Result<(Responder, ResponderTask)> {
-        let mut hostname = match hostname::get() {
-            Ok(s) => match s.into_string() {
-                Ok(s) => s,
-                Err(_) => {
-                    return Err(std::io::Error::new(
+        hostname::get()
+            .and_then(|s| s.into_string().map_err(|_|
+                     std::io::Error::new(
                         std::io::ErrorKind::InvalidData,
                         "Hostname not valid unicode",
-                    ))
-                }
-            },
-            Err(err) => return Err(err),
-        };
+                    )
+            ))
+            .and_then(Self::with_hostname)
+    }
+
+    pub fn with_hostname(mut hostname: String) -> io::Result<(Responder, ResponderTask)> {
         if !hostname.ends_with(".local") {
             hostname.push_str(".local");
         }
